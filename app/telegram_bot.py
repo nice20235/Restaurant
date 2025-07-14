@@ -6,10 +6,16 @@ import os
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from telegram.constants import ParseMode
+from dotenv import load_dotenv
+load_dotenv()
 
 
 # Get bot token from environment variable or use default
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8045814472:AAEuenV-dYJi8v-AhKKX7lX9RquEz6nQelY") 
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in environment variables or .env file!")
+
+
 CODES_FILE = "phone_codes.json"
 CODE_EXPIRY_SECONDS = 60  # 1 minute
 

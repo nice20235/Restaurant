@@ -9,6 +9,8 @@ from app.db.database import init_db, close_db
 from app.api.endpoints import users, food, orders, categories
 from app.auth.routes import auth_router
 from app.telegram_bot import start_telegram_bot
+from dotenv import load_dotenv
+load_dotenv()
 
 # Application lifespan manager
 @asynccontextmanager
