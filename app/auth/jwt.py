@@ -2,10 +2,7 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from app.core.config import settings
 from typing import Optional
-from passlib.context import CryptContext
 import os
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
@@ -41,9 +38,3 @@ def decode_refresh_token(token: str):
         return payload
     except JWTError:
         return None
-
-def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password) 

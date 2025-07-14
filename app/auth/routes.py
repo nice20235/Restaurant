@@ -1,59 +1,99 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
-from app.schemas.user import UserCreate, UserLogin
-from app.crud.user import get_user_by_username, create_user, verify_password, get_user_by_email, get_password_hash
-from app.auth.jwt import create_access_token, create_refresh_token, decode_refresh_token
-from app.models.user import UserRole
-from fastapi.security import OAuth2PasswordRequestForm
+from app.auth.jwt import create_access_token, decode_access_token
+from app.crud.user import get_user_by_phone_number, create_user
+from app.schemas.user import UserCreate, UserInDB
+from app.telegram_bot import validate_telegram_code
+from app.auth.dependencies import get_current_user
+import logging
 
-router = APIRouter()
+logger = logging.getLogger(__name__)
 
-@router.post("/register")
-async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
-    db_user = await get_user_by_username(db, user.username)
-    if db_user:
-        raise HTTPException(status_code=400, detail="Username already registered")
-    db_email = await get_user_by_email(db, user.email)
-    if db_email:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    user_obj = await create_user(db, user)
-    return {"msg": "User registered successfully", "user_id": user_obj.id}
+auth_router = APIRouter()
 
-@router.post("/login")
-async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
-    user = await get_user_by_username(db, login_data.username)
-    if not user or not verify_password(login_data.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Incorrect username or password")
-    access_token = create_access_token(data={"sub": user.username, "role": user.role})
-    refresh_token = create_refresh_token(data={"sub": user.username, "role": user.role})
+@auth_router.post("/verify-code")
+async def verify_code(
+    phone_number: str,
+    code: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Verify phone number with Telegram code and return JWT token
+    """
+    # Validate the code
+    if not validate_telegram_code(phone_number, code):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired verification code"
+        )
+    
+    # Check if user exists
+    user = await get_user_by_phone_number(db, phone_number)
+    if not user:
+        # Create new user
+        user_data = UserCreate(
+            phone_number=phone_number,
+            is_admin=False,
+            is_active=True
+        )
+        user = await create_user(db, user_data)
+        logger.info(f"Created new user: {phone_number}")
+    
+    # Create access token
+    access_token = create_access_token(data={"sub": user.phone_number})
+    
+    logger.info(f"User authenticated successfully: {phone_number}")
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "phone_number": user.phone_number,
+            "is_admin": user.is_admin,
+            "is_active": user.is_active
+        }
     }
 
-@router.post("/reset-password")
-async def reset_password(email: str, new_password: str, db: AsyncSession = Depends(get_db)):
-    user = await get_user_by_email(db, email)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    user.hashed_password = get_password_hash(new_password)
-    db.add(user)
-    await db.commit()
-    return {"msg": "Password reset successful"}
+@auth_router.post("/register")
+async def register_user(
+    user_data: UserCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Register a new user (admin only)
+    """
+    # Check if user already exists
+    existing_user = await get_user_by_phone_number(db, user_data.phone_number)
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User with this phone number already exists"
+        )
+    
+    # Create new user
+    user = await create_user(db, user_data)
+    logger.info(f"Admin created new user: {user.phone_number}")
+    
+    return {
+        "message": "User created successfully",
+        "user": {
+            "id": user.id,
+            "phone_number": user.phone_number,
+            "is_admin": user.is_admin,
+            "is_active": user.is_active
+        }
+    }
 
-@router.post("/logout")
-async def logout():
-    # JWT logout is handled client-side by deleting the token
-    return {"msg": "Logout successful."}
-
-@router.post("/refresh")
-async def refresh_token_endpoint(refresh_token: str = Body(..., embed=True)):
-    payload = decode_refresh_token(refresh_token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-    username = payload.get("sub")
-    role = payload.get("role", "user")
-    access_token = create_access_token(data={"sub": username, "role": role})
-    return {"access_token": access_token, "token_type": "bearer"} 
+@auth_router.get("/me")
+async def get_current_user_info(current_user=Depends(get_current_user)):
+    """
+    Get current user information
+    """
+    return {
+        "id": current_user.id,
+        "phone_number": current_user.phone_number,
+        "is_admin": current_user.is_admin,
+        "is_active": current_user.is_active
+    } 
